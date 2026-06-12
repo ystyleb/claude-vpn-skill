@@ -22,11 +22,12 @@ EMAIL="you@email.com"
 SSH_PORT="22"
 
 # Cloudflare 认证（二选一，删掉不用的那组）
+# 用 export：acme.sh 的 dns_cf 钩子和步骤 16 的 curl 都是子进程，必须从环境继承凭据
 # 方式一：API Token（推荐，最小权限）
-CF_Token="your_api_token"
+export CF_Token="your_api_token"
 # 方式二：Global API Key
-# CF_Key="your_global_api_key"
-# CF_Email="your_cf_email"
+# export CF_Key="your_global_api_key"
+# export CF_Email="your_cf_email"
 
 # === 自动拼接（source 时求值，无需手动改） ===
 DOMAIN="${SUBDOMAIN_PREFIX}.${ROOT_DOMAIN}"
@@ -109,11 +110,7 @@ echo "DECOY_NAME: $DECOY_NAME"
 curl https://get.acme.sh | sh -s email="$EMAIL"
 ```
 
-设置 Cloudflare API（变量在 deploy.env 已定义，acme.sh 的 dns_cf 插件需要它们出现在环境变量里）：
-
-```bash
-export CF_Token CF_Key CF_Email 2>/dev/null; true
-```
+CF 凭据已在步骤 0 的 deploy.env 里用 `export` 定义，`source` 后即在环境中，acme.sh 的 `dns_cf` 子进程能直接继承——无需在此重复 export。
 
 申请并安装证书（显式指定 Let's Encrypt——acme.sh 默认 CA 是 ZeroSSL，偶发签发失败率更高）：
 
@@ -449,7 +446,7 @@ openssl x509 -in /root/cert/fullchain.cer -noout -enddate
 ## 步骤 15：保存配置并输出结果
 
 ```bash
-SERVER_IP=$(curl -s --max-time 10 ifconfig.me)
+SERVER_IP=$(curl -4 -s --max-time 10 ifconfig.me)  # 强制 IPv4：A 记录和客户端直连都用 IPv4，双栈机 ifconfig.me 可能返回 IPv6
 
 VLESS_LINK="vless://${UUID}@${DOMAIN}:443?encryption=none&security=tls&sni=${DOMAIN}&type=xhttp&host=${DOMAIN}&path=%2F${WS_PATH}&fp=chrome#VLESS-XHTTP-TLS-CF"
 
@@ -540,7 +537,7 @@ if [ -z "$ZONE_ID" ] || [ "$ZONE_ID" = "null" ]; then
   echo "FAIL: 找不到 zone（凭据权限不足或域名不在此账户），转手动配置"; exit 1
 fi
 
-SERVER_IP=$(curl -s --max-time 10 ifconfig.me)
+SERVER_IP=$(curl -4 -s --max-time 10 ifconfig.me)  # 强制 IPv4：A 记录和客户端直连都用 IPv4，双栈机 ifconfig.me 可能返回 IPv6
 
 # 2. A 记录（已存在则更新，否则创建），开橙色云
 REC_ID=$(curl -s "${AUTH[@]}" "$API/zones/$ZONE_ID/dns_records?type=A&name=$DOMAIN" | jq -r '.result[0].id')
