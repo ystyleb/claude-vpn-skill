@@ -3,7 +3,7 @@
 > **Let Claude set up your VPN.** Automatically deploy a self-hosted VPN (VLESS + XHTTP + TLS + Cloudflare CDN) on your VPS. Zero to working node in about 10 minutes.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Skill Version](https://img.shields.io/badge/skill-v4.2-blue)](https://github.com/henrywen98/claude-vpn-skill/releases)
+[![Skill Version](https://img.shields.io/badge/skill-v4.3-blue)](https://github.com/henrywen98/claude-vpn-skill/releases)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Skill-8B5CF6)](https://claude.com/claude-code)
 [![Stars](https://img.shields.io/github/stars/henrywen98/claude-vpn-skill?style=social)](https://github.com/henrywen98/claude-vpn-skill/stargazers)
 
@@ -69,7 +69,7 @@ Client → Cloudflare CDN (443) → Nginx (TLS reverse proxy) → Xray (127.0.0.
 
 - A VPS running Debian 11/12 or Ubuntu 20.04+ (BandwagonHost, Vultr, DigitalOcean, AWS Lightsail, etc.)
 - A domain attached to Cloudflare (registrar doesn't matter)
-- Cloudflare API credentials (Global API Key or API Token)
+- Cloudflare API credentials (API Token recommended, or Global API Key) — used for SSL cert issuance and automatic CF dashboard configuration
 - [Claude Code](https://claude.com/claude-code) (free CLI tool; requires an Anthropic account at runtime — either a Claude.ai Pro/Max subscription **or** an API key with pay-per-use billing)
 
 ### 2️⃣ Install the skill

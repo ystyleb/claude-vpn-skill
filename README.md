@@ -3,7 +3,7 @@
 > **让 Claude 替你搭梯子**——在 VPS 上自动化部署 VLESS + XHTTP + TLS + Cloudflare CDN 架构的自建 VPN，从 0 到能用 10 分钟搞定。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Skill Version](https://img.shields.io/badge/skill-v4.2-blue)](https://github.com/henrywen98/claude-vpn-skill/releases)
+[![Skill Version](https://img.shields.io/badge/skill-v4.3-blue)](https://github.com/henrywen98/claude-vpn-skill/releases)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Skill-8B5CF6)](https://claude.com/claude-code)
 [![Stars](https://img.shields.io/github/stars/henrywen98/claude-vpn-skill?style=social)](https://github.com/henrywen98/claude-vpn-skill/stargazers)
 
@@ -65,7 +65,7 @@
 
 - VPS：Debian 11/12 或 Ubuntu 20.04+（搬瓦工、Vultr、DigitalOcean、AWS Lightsail 都行）
 - 域名：已接入 Cloudflare（域名本身放哪家注册商都行）
-- Cloudflare API：Global API Key 或 API Token（用来自动签证书）
+- Cloudflare API：API Token（推荐）或 Global API Key（用来自动签证书 + 自动配置 CF 控制台）
 - [Claude Code](https://claude.com/claude-code)（免费 CLI 工具，使用时需 Anthropic 账号授权：Claude.ai Pro 订阅 **或** API Key 按量付费，二选一）
 
 ### 2️⃣ 安装 skill

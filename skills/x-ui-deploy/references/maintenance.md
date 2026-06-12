@@ -108,6 +108,7 @@ chmod 600 /root/vpn-config.txt
 | 文件 | 路径 |
 |------|------|
 | 密钥目录 | `/root/.secrets/` |
+| 部署变量文件 | `/root/.secrets/deploy.env`（所有远程命令 `source` 它获取变量；含 CF 凭据，chmod 600）|
 | XHTTP 路径 | `/root/.secrets/ws_path.txt` |
 | 客户端 UUID | `/root/.secrets/vless_uuid.txt` |
 | X-UI 凭据 | `/root/.secrets/xui_username.txt` / `xui_password.txt` |

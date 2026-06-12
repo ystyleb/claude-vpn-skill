@@ -2,30 +2,42 @@
 
 Claude 按此文件的步骤逐条在服务器上执行命令。
 
-## 步骤 0：定义变量
+> **执行模式**：AI agent 的每条远程命令都是一次独立的 SSH 调用，shell 变量不会跨调用保留。因此步骤 0 把所有变量持久化到服务器上的 env 文件，后续每个步骤统一用以下模式执行（一个步骤的多条命令可以合并在同一次 SSH 调用里）：
+>
+> ```bash
+> ssh -p {SSH_PORT} [-i {KEY_PATH}] {USER}@{SERVER_IP} 'source /root/.secrets/deploy.env && <步骤命令>'
+> ```
 
-在服务器上执行任何操作前，先定义以下变量。用户提供的值在第一步收集阶段已获取。
+## 步骤 0：写入部署变量文件
+
+第一条 SSH 命令：把用户提供的值写入 `/root/.secrets/deploy.env`（把示例值替换为用户实际值后执行）：
 
 ```bash
-# === 用户提供的值（替换为实际值）===
+mkdir -p /root/.secrets && chmod 700 /root/.secrets
+cat > /root/.secrets/deploy.env << "ENVEOF"
+# === 用户提供的值 ===
 ROOT_DOMAIN="example.com"
 SUBDOMAIN_PREFIX="node1"
 EMAIL="you@email.com"
 SSH_PORT="22"
 
-# Cloudflare 认证（二选一）
-# 方式一：Global API Key
-CF_Key="your_global_api_key"
-CF_Email="your_cf_email"
-# 方式二：API Token
-# CF_Token="your_api_token"
+# Cloudflare 认证（二选一，删掉不用的那组）
+# 方式一：API Token（推荐，最小权限）
+CF_Token="your_api_token"
+# 方式二：Global API Key
+# CF_Key="your_global_api_key"
+# CF_Email="your_cf_email"
 
-# === 自动拼接 ===
+# === 自动拼接（source 时求值，无需手动改） ===
 DOMAIN="${SUBDOMAIN_PREFIX}.${ROOT_DOMAIN}"
 XUI_PORT="54321"
+ENVEOF
+chmod 600 /root/.secrets/deploy.env
 ```
 
-后续所有命令直接使用这些变量，无需额外替换。
+> heredoc 分隔符带引号（`"ENVEOF"`），`DOMAIN="${SUBDOMAIN_PREFIX}..."` 以字面量写入文件、每次 `source` 时才求值——派生变量永远跟随基础变量。
+>
+> 后续所有步骤先 `source /root/.secrets/deploy.env` 再执行命令，变量自动可用。
 
 ---
 
@@ -42,10 +54,10 @@ ss -tlnp | grep -E ':80 |:443 '  # 检查端口占用
 ## 步骤 2：安装依赖
 
 ```bash
-apt update && apt install -y nginx ufw fail2ban curl wget openssl sqlite3 socat cron python3-bcrypt
+apt update && apt install -y nginx ufw fail2ban curl wget openssl sqlite3 socat cron jq python3-bcrypt
 ```
 
-> `python3-bcrypt` 用于后续生成面板密码哈希。如果包不存在，后续会 fallback 到 `pip3 install bcrypt`。
+> `python3-bcrypt` 用于后续生成面板密码哈希。如果包不存在，后续会 fallback 到 `pip3 install bcrypt`。`jq` 用于步骤 16 解析 Cloudflare API 响应。
 
 ## 步骤 3：生成安全参数
 
@@ -70,15 +82,20 @@ echo "${DECOY_ADJS[RANDOM % ${#DECOY_ADJS[@]}]} ${DECOY_NOUNS[RANDOM % ${#DECOY_
 chmod 600 /root/.secrets/*.txt
 ```
 
-读取生成的值，后续步骤需要：
+把生成的值注册进 deploy.env（以 `$(cat ...)` 字面量追加，每次 source 时从 `.txt` 文件动态读取——以后轮换 WS_PATH/UUID 等只需替换对应 `.txt` 文件，deploy.env 不用动；但 CF 凭据轮换仍需编辑 deploy.env 本身）：
 
 ```bash
-WS_PATH=$(cat /root/.secrets/ws_path.txt)
-UUID=$(cat /root/.secrets/vless_uuid.txt)
-XUI_USER=$(cat /root/.secrets/xui_username.txt)
-XUI_PASS=$(cat /root/.secrets/xui_password.txt)
-DECOY_NAME=$(cat /root/.secrets/decoy_name.txt)
+cat >> /root/.secrets/deploy.env << "ENVEOF"
 
+# === 步骤 3 生成的安全参数（source 时动态读取） ===
+WS_PATH="$(cat /root/.secrets/ws_path.txt)"
+UUID="$(cat /root/.secrets/vless_uuid.txt)"
+XUI_USER="$(cat /root/.secrets/xui_username.txt)"
+XUI_PASS="$(cat /root/.secrets/xui_password.txt)"
+DECOY_NAME="$(cat /root/.secrets/decoy_name.txt)"
+ENVEOF
+
+source /root/.secrets/deploy.env
 echo "WS_PATH: $WS_PATH"
 echo "UUID: $UUID"
 echo "XUI_USER: $XUI_USER"
@@ -92,18 +109,16 @@ echo "DECOY_NAME: $DECOY_NAME"
 curl https://get.acme.sh | sh -s email="$EMAIL"
 ```
 
-设置 Cloudflare API（根据用户选择的认证方式，变量在步骤 0 已定义）：
+设置 Cloudflare API（变量在 deploy.env 已定义，acme.sh 的 dns_cf 插件需要它们出现在环境变量里）：
 
 ```bash
-# 方式一已通过 CF_Key 和 CF_Email 导出
-export CF_Key CF_Email
-# 方式二取消注释：export CF_Token
+export CF_Token CF_Key CF_Email 2>/dev/null; true
 ```
 
-申请并安装证书：
+申请并安装证书（显式指定 Let's Encrypt——acme.sh 默认 CA 是 ZeroSSL，偶发签发失败率更高）：
 
 ```bash
-~/.acme.sh/acme.sh --issue -d "$ROOT_DOMAIN" -d "*.$ROOT_DOMAIN" --dns dns_cf --keylength ec-256
+~/.acme.sh/acme.sh --issue -d "$ROOT_DOMAIN" -d "*.$ROOT_DOMAIN" --dns dns_cf --server letsencrypt --keylength ec-256
 
 mkdir -p /root/cert
 ~/.acme.sh/acme.sh --install-cert -d "$ROOT_DOMAIN" \
@@ -170,7 +185,7 @@ cat > "/var/www/$DOMAIN/index.html" << SITEEOF
         <div class="feature"><div class="icon">&#9881;</div><h3>Process Automation</h3><p>Streamline workflows and reduce operational costs with smart automation.</p></div>
         <div class="feature"><div class="icon">&#128200;</div><h3>Data Analytics</h3><p>Turn your data into actionable insights with advanced analytics platforms.</p></div>
     </section>
-    <footer class="footer">&copy; 2026 ${DECOY_NAME}. All rights reserved.</footer>
+    <footer class="footer">&copy; $(date +%Y) ${DECOY_NAME}. All rights reserved.</footer>
 </body>
 </html>
 SITEEOF
@@ -185,6 +200,20 @@ sed -i 's/# server_tokens off;/server_tokens off;/' /etc/nginx/nginx.conf
 
 ## 步骤 7：配置 Nginx 站点
 
+nginx 1.25.1 起 `listen ... http2` 写法已 deprecated（改用独立的 `http2 on;` 指令），先按版本选择语法：
+
+```bash
+NGINX_VER=$(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+if dpkg --compare-versions "$NGINX_VER" ge 1.25.1; then
+  LISTEN_443='listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;'
+else
+  LISTEN_443='listen 443 ssl http2;
+    listen [::]:443 ssl http2;'
+fi
+```
+
 ```bash
 cat > "/etc/nginx/sites-available/$DOMAIN" << NGINXEOF
 server {
@@ -195,8 +224,7 @@ server {
 }
 
 server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
+    $LISTEN_443
     server_name $DOMAIN;
 
     ssl_certificate /root/cert/fullchain.cer;
@@ -240,7 +268,9 @@ server {
 NGINXEOF
 ```
 
-> heredoc 不带引号，`$DOMAIN`、`$ROOT_DOMAIN`、`$WS_PATH` 会被 bash 展开为实际值。Nginx 变量（`$server_name`、`$host` 等）用 `\$` 转义以保留。
+> heredoc 不带引号，`$DOMAIN`、`$ROOT_DOMAIN`、`$WS_PATH`、`$LISTEN_443` 会被 bash 展开为实际值。Nginx 变量（`$server_name`、`$host` 等）用 `\$` 转义以保留。
+>
+> ⚠️ 上面的版本判断和 heredoc 必须放在**同一次 SSH 调用**里执行（`$LISTEN_443` 是普通 shell 变量，不在 deploy.env 中）。
 
 启用配置：
 
@@ -285,8 +315,11 @@ systemctl enable fail2ban && systemctl restart fail2ban
 
 ## 步骤 10：安装 3X-UI
 
+Pin 到指定版本安装（master 分支的安装脚本和数据库 schema 随时可能变化，导致后续步骤的交互处理和 sqlite 写入失效）：
+
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/MHSanaei/3x-ui/master/install.sh)
+XUI_VERSION="v3.3.0"   # 本 skill 验证过的版本；升级前先确认步骤 11-13 的表结构仍兼容
+bash <(curl -Ls "https://raw.githubusercontent.com/MHSanaei/3x-ui/$XUI_VERSION/install.sh") "$XUI_VERSION"
 ```
 
 > **交互处理**：安装器会依次要求输入：
@@ -297,13 +330,20 @@ bash <(curl -Ls https://raw.githubusercontent.com/MHSanaei/3x-ui/master/install.
 >
 > 使用 **MHSanaei/3x-ui**，不要用已停维的 vaxilu/x-ui。
 
-等待安装完成，确认数据库文件存在：
+等待安装完成，确认数据库文件存在、且表结构符合步骤 11-13 的预期（防上游 schema 变更导致静默写错）：
 
 ```bash
 ls -la /etc/x-ui/x-ui.db
+sqlite3 /etc/x-ui/x-ui.db ".schema settings" | grep -q '"key"\|key ' && echo "settings 表 OK"
+sqlite3 /etc/x-ui/x-ui.db ".schema users" | grep -q 'username' && echo "users 表 OK"
+sqlite3 /etc/x-ui/x-ui.db ".schema inbounds" | grep -q 'stream_settings' && echo "inbounds 表 OK"
 ```
 
+任一项不输出 OK → 上游 schema 已变，停下来人工核对表结构，不要盲跑步骤 11-13。
+
 ## 步骤 11：配置 3X-UI 面板
+
+> ⚠️ 本步骤整个代码块必须在**同一次 SSH 调用**里执行（`HASHED`、`NEW_SECRET` 是步骤内临时变量，拆开执行会丢失，导致 sqlite 写入空值）。
 
 ```bash
 systemctl stop x-ui
@@ -313,8 +353,8 @@ sqlite3 /etc/x-ui/x-ui.db "INSERT OR REPLACE INTO settings (key, value) VALUES (
 sqlite3 /etc/x-ui/x-ui.db "INSERT OR REPLACE INTO settings (key, value) VALUES ('webPort', '$XUI_PORT');"
 
 # 更新面板凭据（bcrypt 密码哈希）
-# 确保 bcrypt 模块可用
-python3 -c "import bcrypt" 2>/dev/null || pip3 install bcrypt -q
+# 确保 bcrypt 模块可用（Debian 12+/Ubuntu 24.04+ 的 pip 受 PEP 668 管控，需要 --break-system-packages）
+python3 -c "import bcrypt" 2>/dev/null || pip3 install bcrypt -q 2>/dev/null || pip3 install bcrypt -q --break-system-packages
 # 注意：openssl rand -base64 生成的密码仅含 A-Za-z0-9+/= 字符，不含单引号，此处安全
 HASHED=$(python3 -c "
 import bcrypt
@@ -358,6 +398,8 @@ sqlite3 /etc/x-ui/x-ui.db "INSERT OR REPLACE INTO settings (key, value) VALUES (
 ```
 
 ## 步骤 13：创建 VLESS 入站
+
+> ⚠️ 本步骤整个代码块必须在**同一次 SSH 调用**里执行（`SETTINGS`/`STREAM`/`SNIFFING` 是步骤内临时变量）。
 
 ```bash
 SETTINGS="{\"clients\":[{\"id\":\"$UUID\",\"flow\":\"\",\"email\":\"default-user\",\"limitIp\":0,\"totalGB\":0,\"expiryTime\":0,\"enable\":true,\"tgId\":\"\",\"subId\":\"\",\"reset\":0}],\"decryption\":\"none\",\"fallbacks\":[]}"
@@ -477,3 +519,56 @@ cat /root/vpn-config.txt
 ```
 
 将输出中的 VLESS 链接、面板凭据、SSH 隧道命令整理后展示给用户。
+
+## 步骤 16：Cloudflare API 自动配置
+
+部署用的 CF 凭据（步骤 4 签证书时已验证可用）同样可以完成 SKILL.md 第三步的全部配置——DNS A 记录、SSL 模式、最低 TLS 版本、WebSocket。在服务器上执行（curl + jq 已在步骤 2 安装）。
+
+> ⚠️ 本步骤整个代码块在**同一次 SSH 调用**里执行（`AUTH`/`ZONE_ID`/`REC_ID` 是步骤内临时变量）。`exit 1` 只退出远程 shell——执行后检查输出有没有 `FAIL:` 前缀，有则转手动配置，不要继续当成功处理。
+
+```bash
+API="https://api.cloudflare.com/client/v4"
+if [ -n "$CF_Token" ]; then
+  AUTH=(-H "Authorization: Bearer $CF_Token")
+else
+  AUTH=(-H "X-Auth-Email: $CF_Email" -H "X-Auth-Key: $CF_Key")
+fi
+
+# 1. 获取 Zone ID
+ZONE_ID=$(curl -s "${AUTH[@]}" "$API/zones?name=$ROOT_DOMAIN" | jq -r '.result[0].id')
+if [ -z "$ZONE_ID" ] || [ "$ZONE_ID" = "null" ]; then
+  echo "FAIL: 找不到 zone（凭据权限不足或域名不在此账户），转手动配置"; exit 1
+fi
+
+SERVER_IP=$(curl -s --max-time 10 ifconfig.me)
+
+# 2. A 记录（已存在则更新，否则创建），开橙色云
+REC_ID=$(curl -s "${AUTH[@]}" "$API/zones/$ZONE_ID/dns_records?type=A&name=$DOMAIN" | jq -r '.result[0].id')
+BODY="{\"type\":\"A\",\"name\":\"$SUBDOMAIN_PREFIX\",\"content\":\"$SERVER_IP\",\"ttl\":1,\"proxied\":true}"
+if [ -z "$REC_ID" ] || [ "$REC_ID" = "null" ]; then
+  curl -s -X POST "${AUTH[@]}" -H "Content-Type: application/json" \
+    "$API/zones/$ZONE_ID/dns_records" -d "$BODY" | jq '{step:"dns_record", success, errors}'
+else
+  curl -s -X PUT "${AUTH[@]}" -H "Content-Type: application/json" \
+    "$API/zones/$ZONE_ID/dns_records/$REC_ID" -d "$BODY" | jq '{step:"dns_record", success, errors}'
+fi
+
+# 3. SSL 模式 → Full (strict)
+curl -s -X PATCH "${AUTH[@]}" -H "Content-Type: application/json" \
+  "$API/zones/$ZONE_ID/settings/ssl" -d '{"value":"strict"}' | jq '{step:"ssl_mode", success, errors}'
+
+# 4. 最低 TLS 版本 → 1.2
+curl -s -X PATCH "${AUTH[@]}" -H "Content-Type: application/json" \
+  "$API/zones/$ZONE_ID/settings/min_tls_version" -d '{"value":"1.2"}' | jq '{step:"min_tls", success, errors}'
+
+# 5. WebSocket → 开启（XHTTP mode=auto 在 CF 链路上可能升级到 WS 通道，关闭会导致部分客户端不通）
+curl -s -X PATCH "${AUTH[@]}" -H "Content-Type: application/json" \
+  "$API/zones/$ZONE_ID/settings/websockets" -d '{"value":"on"}' | jq '{step:"websockets", success, errors}'
+```
+
+逐项检查输出的 `success` 字段：
+
+- **全部 `true`** → CF 配置完成，告知用户无需再去控制台手动操作
+- **任一项 `false`** → 把对应项的 `errors` 展示给用户，并给出 SKILL.md 第三步的手动配置表作为 fallback。最常见原因：API Token 缺 **Zone Settings:Edit** 权限（settings 三项会 403，但 DNS 记录能成功——此时只需手动改 SSL/TLS 设置）
+
+> 等待 DNS 生效后（通常 1-2 分钟），可验证：`curl -s -o /dev/null -w '%{http_code}' https://$DOMAIN` 返回 200 即整条链路打通。

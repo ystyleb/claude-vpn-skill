@@ -111,6 +111,14 @@ VLESS 链接很长，复制时经常在 path 参数处断行，导致路径中�
 
 在面板里删除/修改入站后，`/usr/local/x-ui/bin/config.json` 可能没有及时更新。不确定时执行 `systemctl restart x-ui` 强制重新生成。
 
-### 6. 传输协议演进
+### 6. CF API 自动配置（步骤 16）部分失败
+
+**症状**：DNS 记录创建成功，但 SSL 模式 / 最低 TLS / WebSocket 三项返回 `success: false`（403）。
+
+**原因**：API Token 只有 `Zone:Read + DNS:Edit`，缺 `Zone Settings:Edit` 权限——acme.sh 签证书和建 DNS 记录都不需要这个权限，所以前面步骤全部正常，到设置项才暴露。
+
+**修复**：二选一：(a) 让用户去 Token 编辑页补 `Zone Settings:Edit` 权限后重跑步骤 16 对应命令；(b) 按 SKILL.md 第三步表格手动配置剩余项（只剩 2-3 项，1 分钟搞定）。
+
+### 7. 传输协议演进
 
 本 skill 已使用 XHTTP 替代 WebSocket（Xray 官方推荐的迁移方向）。XHTTP 分片成多个短 HTTP 请求，流量特征更像正常网页浏览，抗检测更强，弱网环境下也更稳定。

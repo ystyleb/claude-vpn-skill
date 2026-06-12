@@ -1,6 +1,6 @@
 ---
 name: x-ui-deploy
-version: "4.2"
+version: "4.3"
 description: |
   Deploy a working VLESS + XHTTP + TLS + Cloudflare CDN VPN service on a fresh VPS
   using the 3X-UI panel. Goal: get a working proxy node up as quickly as possible.
@@ -75,6 +75,10 @@ description: |
 > 3. SSH 端口（默认 22）
 > 4. SSH 认证方式：密码登录还是密钥？如果是密钥，本地密钥路径是什么？
 
+> ⚠️ **密码认证的分流处理**：AI 执行环境没有交互终端，`ssh` 的密码提示会永远挂起。用户选密码登录时，二选一：
+> 1. **推荐**：引导用户先配密钥——本地执行 `ssh-keygen -t ed25519`（已有密钥跳过）+ `ssh-copy-id -p {PORT} {USER}@{IP}`（这一步用户自己在终端输一次密码），之后按密钥流程走
+> 2. **退路**：本地安装 `sshpass`（macOS: `brew install sshpass`），命令模式 `sshpass -p '{密码}' ssh ...`——明确警告用户：密码会进本地命令历史和会话记录
+
 **第二轮**（域名信息）：
 > 请提供域名相关信息：
 > 1. 根域名（需要已经添加到 Cloudflare）
@@ -82,15 +86,15 @@ description: |
 > 3. 邮箱（用于 SSL 证书注册通知）
 
 **第三轮**（Cloudflare 认证）：
-> 最后需要 Cloudflare API 凭据来自动申请 SSL 证书：
+> 最后需要 Cloudflare API 凭据，用来自动申请 SSL 证书 + 自动完成 CF 控制台配置（DNS 记录、SSL 模式等）：
 >
-> **方式一（推荐）**：Global API Key + 邮箱
+> **方式一（推荐）**：API Token——权限最小化，泄漏影响可控
+> - 获取：https://dash.cloudflare.com/profile/api-tokens → 创建令牌 → 自定义令牌
+> - 需要权限（Zone 级，作用于你的域名）：**Zone:Read、DNS:Edit、Zone Settings:Edit**
+>
+> **方式二**：Global API Key + 邮箱——全账户权限，泄漏即整个 CF 账户失守，不推荐
 > - 获取：https://dash.cloudflare.com/profile/api-tokens → 查看 Global API Key
 > - ⚠️ 邮箱填 **Cloudflare 账户的注册邮箱**（CF 面板右上角头像下能看到），不一定等于上一轮的证书邮箱
->
-> **方式二**：API Token
-> - 获取：https://dash.cloudflare.com/profile/api-tokens → 创建令牌
-> - 需要权限：Zone DNS Edit, Zone SSL Edit, Zone Settings Edit, Zone Page Rules Edit
 >
 > 你选哪种方式？请提供对应的凭据。
 
@@ -119,37 +123,39 @@ description: |
 
 #### 操作方式
 
-1. **先完整读取 `references/manual-deploy.md`**，了解全部 15 个步骤
-2. SSH 连接到服务器（根据认证方式选择命令）：
+1. **先完整读取 `references/manual-deploy.md`**，了解全部 16 个步骤
+2. 每个步骤都是一次独立的 SSH 调用（AI 执行环境的 shell 变量不跨调用保留，**不要假设能维持一个交互式 SSH 会话**）：
    ```bash
    # 密钥认证
-   ssh -p {SSH_PORT} -i {KEY_PATH} {USER}@{SERVER_IP}
-   # 密码认证
-   ssh -p {SSH_PORT} {USER}@{SERVER_IP}
+   ssh -p {SSH_PORT} -i {KEY_PATH} {USER}@{SERVER_IP} '<步骤命令>'
+   # 密码认证（需 sshpass，见信息收集阶段的分流处理）
+   sshpass -p '{密码}' ssh -p {SSH_PORT} {USER}@{SERVER_IP} '<步骤命令>'
    ```
-3. 先执行**步骤 0（定义变量）**，将用户提供的值填入变量定义块
-4. 然后按步骤 1-15 顺序执行，命令中的 `$变量` 会自动展开为实际值
+3. 先执行**步骤 0**：把用户提供的值写入服务器上的 `/root/.secrets/deploy.env`
+4. 然后按步骤 1-16 顺序执行，每条远程命令统一以 `source /root/.secrets/deploy.env && ` 开头，`$变量` 自动可用
 
 #### 执行原则
 
-- **保持 SSH 会话连续**：所有步骤必须在同一个 SSH 会话中执行。如果会话断开重连，必须重新执行步骤 0（定义变量）和步骤 3 的变量读取部分
+- **变量靠 deploy.env，不靠会话**：所有步骤的远程命令先 `source /root/.secrets/deploy.env`。一个步骤内有依赖关系的多条命令（如步骤 7 的版本判断 + heredoc）合并在同一次 SSH 调用里
 - **每步检查输出**：确认成功再继续下一步
 - **失败时排障**：读取 `references/troubleshooting.md` 中对应的诊断命令，尝试修复后重试
 - **不要跳步**：每一步都有依赖关系
-- **步骤 10（安装 3X-UI）**是交互式的：安装器会要求输入用户名/密码/端口，随意输入即可，步骤 11 会通过数据库覆盖
+- **步骤 10（安装 3X-UI）**是交互式的：安装器会要求输入用户名/密码/端口，随意输入即可，步骤 11 会通过数据库覆盖；安装后必须跑 schema sanity check 再进入步骤 11
 
 #### 部署完成后输出
 
 部署成功后，向用户展示以下信息：
 - VLESS 客户端链接（完整一行）
 - X-UI 面板的 SSH 隧道命令 + 用户名/密码
-- 需要在 Cloudflare 控制台完成的配置（第三步）
+- Cloudflare 配置结果（第三步自动完成的项 + 需要手动兜底的项，如有）
 
 ---
 
 ### 第三步：Cloudflare 配置（部署后必做）
 
-提醒用户在 Cloudflare 控制台完成以下配置：
+**优先自动完成**：执行 `manual-deploy.md` 步骤 16——用部署时已验证可用的 CF 凭据，通过 API 自动配置全部 4 项。全部 `success: true` 则告知用户无需手动操作。
+
+**API 失败时才让用户手动配置**（最常见原因是 API Token 缺 `Zone Settings:Edit` 权限，此时 DNS 记录通常已自动建好，只剩 2-4 项）：
 
 | # | 配置项 | 操作 |
 |---|--------|------|
