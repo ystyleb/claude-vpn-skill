@@ -1,3 +1,5 @@
+
+
 # x-ui-deploy · AI 一键搭建 VPN 翻墙节点
 
 > **让 Claude 替你搭梯子**——在 VPS 上自动化部署 VLESS + XHTTP + TLS + Cloudflare CDN 架构的自建 VPN，从 0 到能用 10 分钟搞定。
@@ -121,10 +123,10 @@ git clone https://github.com/henrywen98/claude-vpn-skill.git
 | 你说什么 | Claude 会做什么 |
 |---|---|
 | "帮我部署一个 VPN" | 新部署全流程 |
-| "VPN 连不上了" | 按 `troubleshooting.md` 诊断 + 修复 |
-| "帮我加一个 VPN 用户" | 按 `maintenance.md` 添加客户端 |
+| "VPN 连不上了" | 按 `references/troubleshooting.md` 诊断 + 修复 |
+| "帮我加一个 VPN 用户" | 按 `references/maintenance.md` 添加客户端 |
 | "证书要续期吗" | 检查证书状态，必要时强制续期 |
-| "想加一个直连节点" | 读 `cf-dns-strategy.md` 给出改造方案 |
+| "想加一个直连节点" | 读 `references/cf-dns-strategy.md` 给出改造方案 |
 
 ## 安全设计
 
